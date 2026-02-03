@@ -6,7 +6,9 @@
 // *
 // * Features:
 // *   - Controls decks 3 and 4 by default
-// *   - Double-tap SHIFT to toggle between decks 3-4 and 1-2
+// *   - Double-tap LEFT SHIFT to toggle left side between deck 3 and deck 1
+// *   - Double-tap RIGHT SHIFT to toggle right side between deck 4 and deck 2
+// *   - Each side can be toggled independently
 // *   - Uses Headphones 2 output when controlling decks 3-4
 // *   - Uses Headphones 1 output when controlling decks 1-2
 // *
@@ -17,38 +19,50 @@
 var PioneerDDJFLX4P2 = {};
 
 // Deck configuration - Player 2 defaults to decks 3 and 4
-PioneerDDJFLX4P2.deckPairs = {
-    primary: {left: 3, right: 4},    // Default: decks 3-4
-    secondary: {left: 1, right: 2}   // Alternative: decks 1-2
+// Each side can be independently toggled between primary and secondary decks
+PioneerDDJFLX4P2.deckConfig = {
+    // Left side (channel 0): toggles between deck 3 and deck 1
+    left: {
+        primary: 3,      // Default deck for left side
+        secondary: 1,    // Alternative deck for left side
+        usingPrimary: true
+    },
+    // Right side (channel 1): toggles between deck 4 and deck 2
+    right: {
+        primary: 4,      // Default deck for right side
+        secondary: 2,    // Alternative deck for right side
+        usingPrimary: true
+    }
 };
-PioneerDDJFLX4P2.usingPrimaryDecks = true;
 
 // Double-tap detection for shift button
 PioneerDDJFLX4P2.shiftDoubleTapTime = 300; // ms window for double-tap
 PioneerDDJFLX4P2.lastShiftPress = [0, 0];  // timestamps for each deck side
 
-// Get the current deck group based on channel (0=left, 1=right) and deck pair mode
+// Get the current deck group based on channel (0=left, 1=right)
 PioneerDDJFLX4P2.getDeckGroup = function(channel) {
-    if (PioneerDDJFLX4P2.usingPrimaryDecks) {
-        return "[Channel" + (channel === 0 ? PioneerDDJFLX4P2.deckPairs.primary.left : PioneerDDJFLX4P2.deckPairs.primary.right) + "]";
-    } else {
-        return "[Channel" + (channel === 0 ? PioneerDDJFLX4P2.deckPairs.secondary.left : PioneerDDJFLX4P2.deckPairs.secondary.right) + "]";
-    }
+    const config = channel === 0 ? PioneerDDJFLX4P2.deckConfig.left : PioneerDDJFLX4P2.deckConfig.right;
+    const deckNum = config.usingPrimary ? config.primary : config.secondary;
+    return "[Channel" + deckNum + "]";
 };
 
 // Get the deck number for a channel
 PioneerDDJFLX4P2.getDeckNumber = function(channel) {
-    if (PioneerDDJFLX4P2.usingPrimaryDecks) {
-        return channel === 0 ? PioneerDDJFLX4P2.deckPairs.primary.left : PioneerDDJFLX4P2.deckPairs.primary.right;
-    } else {
-        return channel === 0 ? PioneerDDJFLX4P2.deckPairs.secondary.left : PioneerDDJFLX4P2.deckPairs.secondary.right;
-    }
+    const config = channel === 0 ? PioneerDDJFLX4P2.deckConfig.left : PioneerDDJFLX4P2.deckConfig.right;
+    return config.usingPrimary ? config.primary : config.secondary;
 };
 
-// Get the appropriate headphone group for current deck pair
+// Get the appropriate headphone group for a specific channel's current deck
+PioneerDDJFLX4P2.getHeadphoneGroupForChannel = function(channel) {
+    const deckNum = PioneerDDJFLX4P2.getDeckNumber(channel);
+    // Decks 1-2 use Headphone 1, Decks 3-4 use Headphone 2
+    return deckNum <= 2 ? "[Headphone1]" : "[Headphone2]";
+};
+
+// Legacy function for compatibility
 PioneerDDJFLX4P2.getHeadphoneGroup = function() {
-    // Decks 3-4 use Headphone 2, Decks 1-2 use Headphone 1
-    return PioneerDDJFLX4P2.usingPrimaryDecks ? "[Headphone2]" : "[Headphone1]";
+    // Returns headphone group based on left deck (for backward compatibility)
+    return PioneerDDJFLX4P2.getHeadphoneGroupForChannel(0);
 };
 
 PioneerDDJFLX4P2.lights = {
@@ -245,24 +259,18 @@ PioneerDDJFLX4P2.highResMSB = {};
 PioneerDDJFLX4P2.trackLoadedLED = function(value, group, _control) {
     // Extract deck number and map to controller LED
     const deckNum = parseInt(group.match(/\[Channel(\d+)\]/)[1]);
-    let ledChannel;
 
-    if (PioneerDDJFLX4P2.usingPrimaryDecks) {
-        if (deckNum === PioneerDDJFLX4P2.deckPairs.primary.left) {
-            ledChannel = 0;
-        } else if (deckNum === PioneerDDJFLX4P2.deckPairs.primary.right) {
-            ledChannel = 1;
-        } else {
-            return;
-        }
+    // Check if this deck is currently active on either side
+    const leftDeckNum = PioneerDDJFLX4P2.getDeckNumber(0);
+    const rightDeckNum = PioneerDDJFLX4P2.getDeckNumber(1);
+
+    let ledChannel;
+    if (deckNum === leftDeckNum) {
+        ledChannel = 0;
+    } else if (deckNum === rightDeckNum) {
+        ledChannel = 1;
     } else {
-        if (deckNum === PioneerDDJFLX4P2.deckPairs.secondary.left) {
-            ledChannel = 0;
-        } else if (deckNum === PioneerDDJFLX4P2.deckPairs.secondary.right) {
-            ledChannel = 1;
-        } else {
-            return;
-        }
+        return; // Not an active deck
     }
 
     midi.sendShortMsg(0x9F, ledChannel, value > 0 ? 0x7F : 0x00);
@@ -272,74 +280,77 @@ PioneerDDJFLX4P2.toggleLight = function(midiIn, active) {
     midi.sendShortMsg(midiIn.status, midiIn.data1, active ? 0x7F : 0);
 };
 
-// Flash all deck LEDs to indicate deck switch
-PioneerDDJFLX4P2.flashDeckSwitchIndicator = function() {
-    // Flash the track loaded LEDs to indicate deck switch
-    midi.sendShortMsg(0x9F, 0x00, 0x7F);
-    midi.sendShortMsg(0x9F, 0x01, 0x7F);
+// Flash a single deck LED to indicate deck switch
+PioneerDDJFLX4P2.flashDeckSwitchIndicator = function(channel) {
+    // Flash the track loaded LED for the specific deck side
+    const ledChannel = channel; // 0 for left, 1 for right
 
-    engine.beginTimer(200, function() {
-        midi.sendShortMsg(0x9F, 0x00, 0x00);
-        midi.sendShortMsg(0x9F, 0x01, 0x00);
+    midi.sendShortMsg(0x9F, ledChannel, 0x7F);
+
+    engine.beginTimer(150, function() {
+        midi.sendShortMsg(0x9F, ledChannel, 0x00);
     }, true);
 
-    engine.beginTimer(400, function() {
-        midi.sendShortMsg(0x9F, 0x00, 0x7F);
-        midi.sendShortMsg(0x9F, 0x01, 0x7F);
+    engine.beginTimer(300, function() {
+        midi.sendShortMsg(0x9F, ledChannel, 0x7F);
+    }, true);
+
+    engine.beginTimer(450, function() {
+        midi.sendShortMsg(0x9F, ledChannel, 0x00);
     }, true);
 
     engine.beginTimer(600, function() {
         // Final state based on track loaded status
-        const leftGroup = PioneerDDJFLX4P2.getDeckGroup(0);
-        const rightGroup = PioneerDDJFLX4P2.getDeckGroup(1);
-        midi.sendShortMsg(0x9F, 0x00, engine.getValue(leftGroup, "track_loaded") ? 0x7F : 0x00);
-        midi.sendShortMsg(0x9F, 0x01, engine.getValue(rightGroup, "track_loaded") ? 0x7F : 0x00);
+        const group = PioneerDDJFLX4P2.getDeckGroup(channel);
+        midi.sendShortMsg(0x9F, ledChannel, engine.getValue(group, "track_loaded") ? 0x7F : 0x00);
     }, true);
 };
 
-// Toggle between deck pairs
-PioneerDDJFLX4P2.toggleDeckPair = function() {
-    PioneerDDJFLX4P2.usingPrimaryDecks = !PioneerDDJFLX4P2.usingPrimaryDecks;
+// Toggle deck for a specific side (channel 0=left, 1=right)
+PioneerDDJFLX4P2.toggleDeckForChannel = function(channel) {
+    const config = channel === 0 ? PioneerDDJFLX4P2.deckConfig.left : PioneerDDJFLX4P2.deckConfig.right;
+    const sideName = channel === 0 ? "Left" : "Right";
 
-    const leftGroup = PioneerDDJFLX4P2.getDeckGroup(0);
-    const rightGroup = PioneerDDJFLX4P2.getDeckGroup(1);
+    // Toggle between primary and secondary deck for this side
+    config.usingPrimary = !config.usingPrimary;
 
-    print("DDJ-FLX4 Player 2: Switched to decks " +
-          PioneerDDJFLX4P2.getDeckNumber(0) + " and " +
-          PioneerDDJFLX4P2.getDeckNumber(1));
-    print("DDJ-FLX4 Player 2: Using " + PioneerDDJFLX4P2.getHeadphoneGroup() + " for cue");
+    const newDeckNum = PioneerDDJFLX4P2.getDeckNumber(channel);
+    const newGroup = PioneerDDJFLX4P2.getDeckGroup(channel);
+    const headphoneGroup = PioneerDDJFLX4P2.getHeadphoneGroupForChannel(channel);
 
-    // Flash LEDs to indicate switch
-    PioneerDDJFLX4P2.flashDeckSwitchIndicator();
+    print("DDJ-FLX4 Player 2: " + sideName + " side switched to Deck " + newDeckNum);
+    print("DDJ-FLX4 Player 2: " + sideName + " side using " + headphoneGroup + " for cue");
 
-    // Update VU meter connections
-    PioneerDDJFLX4P2.reconnectVuMeters();
+    // Flash LED for this side to indicate switch
+    PioneerDDJFLX4P2.flashDeckSwitchIndicator(channel);
 
-    // Re-initialize high-res MSB storage for new deck groups
-    PioneerDDJFLX4P2.highResMSB[leftGroup] = PioneerDDJFLX4P2.highResMSB[leftGroup] || {};
-    PioneerDDJFLX4P2.highResMSB[rightGroup] = PioneerDDJFLX4P2.highResMSB[rightGroup] || {};
+    // Update VU meter connection for this side
+    PioneerDDJFLX4P2.reconnectVuMeterForChannel(channel);
+
+    // Re-initialize high-res MSB storage for the new deck group
+    PioneerDDJFLX4P2.highResMSB[newGroup] = PioneerDDJFLX4P2.highResMSB[newGroup] || {};
 };
 
 // Reconnect VU meters to current deck pair
-PioneerDDJFLX4P2.vuMeterConnections = [];
+PioneerDDJFLX4P2.vuMeterConnections = [null, null]; // [left, right]
 
 PioneerDDJFLX4P2.reconnectVuMeters = function() {
-    // Disconnect old connections
-    PioneerDDJFLX4P2.vuMeterConnections.forEach(function(conn) {
-        conn.disconnect();
-    });
-    PioneerDDJFLX4P2.vuMeterConnections = [];
+    // Reconnect both sides
+    PioneerDDJFLX4P2.reconnectVuMeterForChannel(0);
+    PioneerDDJFLX4P2.reconnectVuMeterForChannel(1);
+};
 
-    // Connect to current deck pair
-    const leftGroup = PioneerDDJFLX4P2.getDeckGroup(0);
-    const rightGroup = PioneerDDJFLX4P2.getDeckGroup(1);
+PioneerDDJFLX4P2.reconnectVuMeterForChannel = function(channel) {
+    // Disconnect old connection for this channel
+    if (PioneerDDJFLX4P2.vuMeterConnections[channel]) {
+        PioneerDDJFLX4P2.vuMeterConnections[channel].disconnect();
+    }
 
-    PioneerDDJFLX4P2.vuMeterConnections.push(
-        engine.makeConnection(leftGroup, "vu_meter", PioneerDDJFLX4P2.vuMeterUpdateLeft)
-    );
-    PioneerDDJFLX4P2.vuMeterConnections.push(
-        engine.makeConnection(rightGroup, "vu_meter", PioneerDDJFLX4P2.vuMeterUpdateRight)
-    );
+    // Connect to current deck for this channel
+    const group = PioneerDDJFLX4P2.getDeckGroup(channel);
+    const callback = channel === 0 ? PioneerDDJFLX4P2.vuMeterUpdateLeft : PioneerDDJFLX4P2.vuMeterUpdateRight;
+
+    PioneerDDJFLX4P2.vuMeterConnections[channel] = engine.makeConnection(group, "vu_meter", callback);
 };
 
 //
@@ -430,7 +441,7 @@ PioneerDDJFLX4P2.init = function() {
     // query the controller for current control positions on startup
     PioneerDDJFLX4P2.sendKeepAlive();
 
-    print("DDJ-FLX4 Player 2: Ready - Double-tap SHIFT to toggle between deck pairs");
+    print("DDJ-FLX4 Player 2: Ready - Double-tap LEFT/RIGHT SHIFT to toggle each side independently");
 };
 
 //
@@ -751,8 +762,8 @@ PioneerDDJFLX4P2.shiftPressed = function(channel, _control, value, _status, _gro
         const timeSinceLastPress = now - PioneerDDJFLX4P2.lastShiftPress[channel];
 
         if (timeSinceLastPress < PioneerDDJFLX4P2.shiftDoubleTapTime) {
-            // Double-tap detected - toggle deck pair
-            PioneerDDJFLX4P2.toggleDeckPair();
+            // Double-tap detected - toggle deck for this side only
+            PioneerDDJFLX4P2.toggleDeckForChannel(channel);
             PioneerDDJFLX4P2.lastShiftPress[channel] = 0; // Reset to prevent triple-tap
         } else {
             PioneerDDJFLX4P2.lastShiftPress[channel] = now;
